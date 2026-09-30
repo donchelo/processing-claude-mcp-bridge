@@ -2,6 +2,8 @@ from typing import Any, Dict, List
 import subprocess
 import json
 import os
+import re
+from pathlib import Path
 from mcp.server.fastmcp import FastMCP
 
 # Inicializar servidor FastMCP
@@ -11,6 +13,29 @@ mcp = FastMCP("processing-bridge")
 PROCESSING_SKETCH_DIR = r"C:\Users\chelo\OneDrive\Documentos\Processing"
 PROCESSING_CLI_PATH = r"C:\Users\chelo\Downloads\processing-4.3.4-windows-x64\processing-4.3.4\processing-java.exe"
 
+# Nombre de sketch permitido: ASCII alfanumérico, guion y guion bajo (no puede empezar con guion).
+_SKETCH_NAME_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_-]{0,63}")
+
+
+def _resolve_sketch_dir(sketch_name: str) -> str:
+    """Valida `sketch_name` y devuelve la ruta absoluta del directorio del sketch.
+
+    Trata el nombre como un identificador, no como una ruta: rechaza vacíos,
+    separadores, `..`, rutas absolutas y cualquier carácter fuera de la lista
+    permitida. Además resuelve la ruta final (siguiendo symlinks) y exige que
+    quede dentro de PROCESSING_SKETCH_DIR. Lanza ValueError si no es válido.
+    """
+    if not isinstance(sketch_name, str) or not _SKETCH_NAME_RE.fullmatch(sketch_name):
+        raise ValueError(
+            "Nombre de sketch inválido: use solo letras, dígitos, guion y guion bajo (máx. 64)"
+        )
+    base = Path(PROCESSING_SKETCH_DIR).resolve()
+    target = (base / sketch_name).resolve()
+    if target.parent != base:
+        raise ValueError("Nombre de sketch inválido: la ruta sale del directorio de sketches")
+    return str(target)
+
+
 @mcp.tool()
 async def run_sketch(sketch_name: str, params: Dict[str, Any] = {}) -> str:
     """Ejecuta un sketch de Processing con los parámetros especificados.
@@ -19,7 +44,10 @@ async def run_sketch(sketch_name: str, params: Dict[str, Any] = {}) -> str:
         sketch_name: Nombre del sketch a ejecutar (sin extensión .pde)
         params: Diccionario con parámetros a pasar al sketch
     """
-    sketch_path = os.path.join(PROCESSING_SKETCH_DIR, sketch_name)
+    try:
+        sketch_path = _resolve_sketch_dir(sketch_name)
+    except ValueError as e:
+        return f"Error: {e}"
     
     # Verificar que el sketch existe
     if not os.path.exists(sketch_path):
@@ -86,7 +114,10 @@ async def create_sketch(sketch_name: str, code: str) -> str:
         sketch_name: Nombre para el nuevo sketch (sin extensión .pde)
         code: Código de Processing a incluir en el sketch
     """
-    sketch_dir = os.path.join(PROCESSING_SKETCH_DIR, sketch_name)
+    try:
+        sketch_dir = _resolve_sketch_dir(sketch_name)
+    except ValueError as e:
+        return f"Error: {e}"
     sketch_file = os.path.join(sketch_dir, f"{sketch_name}.pde")
     
     try:
@@ -109,7 +140,10 @@ async def update_sketch(sketch_name: str, code: str) -> str:
         sketch_name: Nombre del sketch a actualizar (sin extensión .pde)
         code: Nuevo código de Processing para el sketch
     """
-    sketch_dir = os.path.join(PROCESSING_SKETCH_DIR, sketch_name)
+    try:
+        sketch_dir = _resolve_sketch_dir(sketch_name)
+    except ValueError as e:
+        return f"Error: {e}"
     sketch_file = os.path.join(sketch_dir, f"{sketch_name}.pde")
     
     if not os.path.exists(sketch_dir):
